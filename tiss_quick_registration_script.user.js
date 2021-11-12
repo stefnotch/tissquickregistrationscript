@@ -606,6 +606,511 @@
 
     self.isCorrectSemester = function () {
         return self.getSubHeader().contains(options.lvaSemester);
+self.init = function () {
+        self.extendJQuery();
+        self.tissQuickRegistration();
+    };
+
+    self.extendJQuery = function () {
+        jQuery.fn.justtext = function () {
+            return $(this).clone()
+                .children()
+                .remove()
+                .end()
+                .text().trim();
+        };
+    };
+
+    self.tissQuickRegistration = function () {
+        if (options.scriptEnabled) {
+            self.pageLog("TISS Quick Registration Script enabled");
+            self.pageLog("LVA Number: " + self.getLVANumber());
+            self.pageLog("LVA Name: " + self.getLVAName());
+            self.pageLog("Selected Tab: " + self.getSelectedTab());
+
+            if (options.registrationType === "lva") {
+                options.nameOfGroup = "LVA-Anmeldung";
+            }
+
+            // test if the lva and group exists
+            if (!options.lvaCheckEnabled || self.doLvaCheck()) {
+                if (!options.lvaSemesterCheckEnabled || self.doSemesterCheck()) {
+                    if (options.registrationType !== "exam") { // own code
+                        var groupLabel = self.doGroupCheck();
+                        if (groupLabel !== null) {
+                            self.highlight(groupLabel);
+                        }
+                    } else {
+                        var examLabel = self.doExamCheck();
+                        if (examLabel !== null) {
+                            self.highlight(examLabel);
+                            self.pageLog("Prüfung: " + examLabel.text().trim());
+                        }
+                    }
+                }
+            }
+
+            if (options.startAtSpecificTime) {
+                self.pageLog("Scripts starts at: " + self.getFormatedDate(options.specificStartTime));
+                self.pageLog("Delay adjustment in ms: " + options.delayAdjustmentInMs);
+                self.startTimer(options.specificStartTime.getTime() - options.delayAdjustmentInMs);
+
+                var examData = self.getExamDate(options.nameOfExam, options.dateOfExam);
+                if (examData.length > 1) {
+                  self.pageLog("Warning: Found more than one matching exam. Are you sure you want that?");
+                }
+                if (examData.length <= 0) {
+                  self.pageLog("Warning: Found no matching exams. Are you sure you want that?");
+                }
+                for(var i = 0; i < examData.length; i++) {
+                    var startTime = self.getExamStartDateTime(examData[i]);
+
+                    if (startTime) {
+                        console.log(options.specificStartTime, startTime);
+                        let timeDifference = options.specificStartTime.getTime() - startTime.getTime();
+                        if (timeDifference > 1000 * 10) {
+                            self.pageLog("Warning: The start time is " + (timeDifference/1000) + " seconds after the exam (" + examData[i].innerText + ") registration start time.");
+                        }
+                        if (timeDifference < -1000 * 60 * 60 * 24) {
+                            self.pageLog("Warning: The start time is way before the exam (" + examData[i].innerText + ") registration start time.");
+                        }
+                    } else {
+                        self.pageLog("Warning: The exam (" + examData[i].innerText + ") registration start time is unknown.");
+                    }
+                }
+                if (Math.abs(options.delayAdjustmentInMs) > 1000 * 60 * 10) {
+                  self.pageLog("Warning: Delay adjustment is longer than 10 minutes. Are you sure you want that?");
+                }
+            } else {
+                self.analysePage();
+            }
+
+        } else {
+            self.pageLog("TISS Quick Registration Script disabled");
+        }
+    };
+
+    self.startTimer = function (startTime) {
+        var offset = startTime - new Date().getTime();
+        if (offset > 0) {
+            self.startRefreshTimer(startTime);
+        } else {
+            self.analysePage();
+        }
+    };
+
+    self.startRefreshTimer = function (startTime) {
+        self.printTimeToStart(startTime);
+
+        var maxMillis = 2147483647;
+        var offset = startTime - new Date().getTime();
+
+        // prevent an overflow
+        if (offset > maxMillis) {
+            offset = maxMillis;
+        }
+
+        window.setTimeout(self.refreshPage, offset);
+    };
+
+    self.printTimeToStart = function (startTime) {
+        var offset = (startTime - new Date().getTime()) / 1000;
+        var out = "Refresh in: ";
+        var minutes = offset / 60;
+        if (minutes > 1) {
+            var hours = minutes / 60;
+            if (hours > 1) {
+                out += Math.floor(hours) + " hours, "
+                minutes = minutes % 60;
+            }
+            out += Math.floor(minutes) + " minutes and ";
+        }
+        var seconds = offset % 60;
+        out += Math.floor(seconds) + " seconds";
+        self.log(out);
+
+        self.pageCountdown(out);
+
+        window.setTimeout(function () {
+            self.printTimeToStart(startTime);
+        }, 1000);
+    };
+
+    self.refreshPage = function () {
+        location.reload();
+    };
+
+    self.analysePage = function () {
+
+        var tab = self.getSelectedTab();
+        var confirmButton = self.getConfirmButton();
+        var okButton = self.getOkButton();
+        var studyCodeSelect = self.getStudyCodeSelect();
+
+        self.log("tab: " + tab);
+        self.log("confirmButton: " + confirmButton);
+        self.log("okButton: " + okButton);
+
+        if (tab === "LVA-Anmeldung") {
+            self.onLVAPage();
+        } else if (tab === "Gruppen") {
+            self.onGroupPage();
+        } else if (tab === "Prüfungen") {
+            self.onExamPage();
+        } else if (studyCodeSelect.length > 0) {
+            self.onStudyCodeSelectPage();
+        } else if (confirmButton.length > 0) {
+            self.onConfirmPage();
+        } else if (okButton.length > 0) {
+            self.onConfirmInfoPage();
+        }
+    };
+
+    self.getLVANumber = function () {
+        return $('#contentInner').find('h1 span:first').text().trim();
+    };
+
+    self.getLVAName = function () {
+        return $('#contentInner').find('h1').justtext();
+    };
+
+    self.getSemester = function () {
+        return $('#contentInner').find('h1 select').val();
+    };
+
+    self.getSelectedTab = function () {
+        return $('li.ui-tabs-selected').text().trim();
+    };
+
+    self.getSubHeader = function () {
+        return $('#contentInner').find('#subHeader').text().trim();
+    };
+
+    self.onLVAPage = function () {
+        self.onGroupPage();
+    };
+
+    self.onGroupPage = function () {
+        if (options.lvaCheckEnabled && !self.doLvaCheck()) {
+            return;
+        }
+
+        if (options.lvaSemesterCheckEnabled && !self.doSemesterCheck()) {
+            return;
+        }
+
+        var groupLabel = self.doGroupCheck();
+        if (groupLabel === null) {
+            return;
+        }
+        self.highlight(groupLabel);
+
+        var groupWrapper = groupLabel.closest('.groupWrapper');
+
+        // open the panel if the option is activated
+        if (options.openPanel) {
+            groupWrapper.children().show();
+            // for some reason, we have to wait some time here and try it again :/
+            setTimeout(function () {
+                groupWrapper.children().show();
+            }, 100);
+        }
+
+        // search for the registration button
+        var regButton = self.getRegistrationButton(groupWrapper);
+        self.log('regButton: ' + regButton);
+
+
+        // push the button
+        if (regButton.length > 0) {
+
+            self.highlight(regButton);
+            regButton.focus();
+
+            if (options.autoRegister) {
+                regButton.click();
+            }
+        } else {
+            if (self.getGroupCancelButton(groupWrapper).length > 0) {
+                self.pageOut('you are registered in group: ' + options.nameOfGroup);
+            } else {
+                // Only refresh the page if the option is set and if the registration is not yet completed.
+                if (options.autoRefresh) {
+                    refreshPage();
+                }
+                self.pageOut('no registration button found');
+            }
+        }
+    };
+
+    self.onExamPage = function () {
+        if (options.lvaCheckEnabled && !self.doLvaCheck()) {
+            return;
+        }
+
+        if (options.lvaSemesterCheckEnabled && !self.doSemesterCheck()) {
+            return;
+        }
+
+        var examLabel = self.doExamCheck();
+        if (examLabel === null) {
+            return;
+        }
+        self.highlight(examLabel);
+
+        var examWrapper = examLabel.closest('.groupWrapper');
+
+        // open the panel if the option is activated
+        if (options.openPanel) {
+            examWrapper.children().show();
+            // for some reason, we have to wait some time here and try it again :/
+            setTimeout(function () {
+                examWrapper.children().show();
+            }, 100);
+        }
+
+        // search for the registration button
+        var regButton = self.getRegistrationButton(examWrapper);
+        self.log('regButton: ' + regButton);
+
+
+        // push the button
+        if (regButton.length > 0) {
+
+            self.highlight(regButton);
+            regButton.focus();
+
+            if (options.autoRegister) {
+                regButton.click();
+            }
+        } else {
+            if (self.getGroupCancelButton(examWrapper).length > 0) {
+                self.pageOut('you are registered in exam: ' + options.nameOfExam);
+            } else {
+                // Only refresh the page if the option is set and if the registration is not yet completed.
+                if (options.autoRefresh) {
+                    refreshPage();
+                }
+                self.pageOut('no registration button found');
+            }
+        }
+    };
+
+    self.onStudyCodeSelectPage = function () {
+        var studyCodeSelect = self.getStudyCodeSelect();
+        var confirmButton = self.getConfirmButton();
+        self.highlight(confirmButton);
+        if (options.studyCode !== undefined && options.studyCode.length > 0) {
+            self.setSelectValue(studyCodeSelect, options.studyCode);
+        }
+        confirmButton.focus();
+        if (options.autoConfirm) {
+            confirmButton.click();
+        }
+    };
+
+    self.onConfirmPage = function () {
+        var confirmButton = self.getConfirmButton();
+        self.highlight(confirmButton);
+        confirmButton.focus();
+        if (options.autoConfirm) {
+            confirmButton.click();
+        }
+    };
+
+    self.onConfirmInfoPage = function () {
+        var okButton = self.getOkButton();
+        self.highlight(okButton);
+        if (options.autoOkPressAtEnd) {
+            setTimeout(function () {
+                var okButton = self.getOkButton();
+                okButton.click();
+            }, options.okPressAtEndDelayInMs);
+        }
+    };
+
+    self.pageOut = function (text) {
+        var out = self.getOutputField();
+        out.text(text);
+    };
+
+    self.pageCountdown = function (text) {
+        var out = self.getCountdownField();
+        out.text(text);
+    };
+
+    self.pageLog = function (text) {
+        self.appendToLogField(text);
+    };
+
+    self.getOutputField = function () {
+        var outputField = $('#TQRScriptOutput');
+        if (outputField.length === 0) {
+            self.injectOutputField();
+            outputField = self.getOutputField();
+        }
+        return outputField;
+    };
+
+    self.getCountdownField = function () {
+        var countdownField = $('#TQRScriptCountdown');
+        if (countdownField.length === 0) {
+            self.injectCountdownField();
+            countdownField = self.getCountdownField();
+        }
+        return countdownField;
+    };
+
+    self.getLogField = function () {
+        var logField = $('#TQRScriptLog');
+        if (logField.length === 0) {
+            self.injectLogField();
+            logField = self.getLogField();
+            if (options.showLog) {
+                logField.show();
+            } else {
+                logField.hide();
+            }
+        }
+        return logField;
+    };
+
+    self.injectOutputField = function () {
+        var el = $('#contentInner');
+        var log = $('#TQRScriptLog');
+        if (log.length) {
+            el = log;
+        }
+        el.before('<div id="TQRScriptOutput" style="color: red; font-weight: bold; font-size: 14pt; padding: 8px 0px;"></div>');
+    };
+
+    self.injectCountdownField = function () {
+        var el = $('#contentInner');
+        var log = $('#TQRScriptLog');
+        if (log.length) {
+            el = log;
+        }
+        el.before('<div id="TQRScriptCountdown" style="color: blue; font-weight: bold; font-size: 14pt; padding: 8px 0px;"></div>');
+    };
+
+    self.injectLogField = function () {
+        $('#contentInner').before('<div id="TQRScriptLog" style="color: black; background-color: #FFFCD9; font-size: 10pt;"><b>Information Log:</b></div>');
+    };
+
+    self.appendToLogField = function (text) {
+        var log = self.getLogField();
+        var newText = log.html() + "<br />" + text;
+        log.html(newText);
+    };
+
+    self.getRegistrationButton = function (groupWrapper) {
+        var regButton;
+        if (options.registrationType === "group"
+            || options.registrationType === "exam"
+            || options.registrationType === "lva") {
+            regButton = $(groupWrapper).find("input:submit[value='Anmelden']");
+            if (regButton.length === 0) {
+                regButton = $(groupWrapper).find("input:submit[value='Voranmelden']");
+                if (regButton.length === 0) {
+                    regButton = $(groupWrapper).find("input:submit[value='Voranmeldung']");
+                }
+            }
+        } else {
+            self.pageLog("registrationType Error: unknown type '" + options.registrationType + "'");
+        }
+        return regButton;
+    };
+
+    self.getGroupCancelButton = function (groupWrapper) {
+        var unregButton = null;
+        if (options.registrationType === "group") {
+            unregButton = $(groupWrapper).find("input:submit[value='Abmelden']");
+        } else if (options.registrationType === "exam") {
+            unregButton = $(groupWrapper).find("input:submit[value='Abmelden']");
+        } else if (options.registrationType === "lva") {
+            unregButton = $(groupWrapper).find("input:submit[value='Abmelden']").filter(function (index) {
+                return $(this).attr("id") !== 'registrationForm:confirmOkBtn';
+            });
+        } else {
+            self.pageLog("registrationType Error: unknown type '" + options.registrationType + "'");
+        }
+        return unregButton;
+    };
+
+    self.getConfirmButton = function () {
+        var confirmButton = $("form#regForm input:submit[value='Anmelden']");
+        if (confirmButton.length === 0) {
+            confirmButton = $("form#regForm input:submit[value='Voranmelden']");
+            if (confirmButton.length === 0) {
+                confirmButton = $("form#regForm input:submit[value='Voranmeldung']");
+            }
+        }
+        return confirmButton;
+    };
+
+    self.getOkButton = function () {
+        return $("form#confirmForm input:submit[value='Ok']");
+    };
+
+    self.getStudyCodeSelect = function () {
+        return $("#regForm").find("select");
+    };
+
+    self.getGroupLabel = function (nameOfGroup) {
+        // Normalize group lables and configured group label before comparing.
+        var normConfName = nameOfGroup.trim().replace(/\s\s+/gi, ' ');
+
+        return $(".groupWrapper .header_element span").filter(function () {
+            var normName = $(this).text().trim().replace(/\s\s+/gi, ' ');
+
+            return normName === normConfName;
+        });
+    };
+
+    self.getExamLabel = function (nameOfExam) {
+        return $(".groupWrapper .header_element span").filter(function () {
+            var tmp = $(this).text().trim();
+            return tmp.match(nameOfExam);
+        });
+    };
+
+    self.getExamDate = function (nameOfExam, dateOfExam) {
+        return $(".groupWrapper .header_element").filter(function () {
+            var examData = $(this).text().trim();
+            var examLabel = self.getExamLabel(nameOfExam).first().text().trim() + " ";
+            var examDate = examData.replace(examLabel, '');
+            return examDate.match(dateOfExam);
+        });
+    };
+
+    self.getExamStartDateTime = function (examData) {
+        // Doesn't really handle time zones, I guess. Then again, this function is only used as a quick check
+        var examStartTimeData = [...examData.parentNode.parentNode.querySelectorAll("fieldset li span")].filter(v => v.id.includes("appBeginn"));
+        if (!examStartTimeData || examStartTimeData.length < 1) {
+          return null;
+        }
+        var startDateTimeString = examStartTimeData[0].innerText.trim();
+
+        var dateTimeValues = startDateTimeString.match(/(\d+)\.(\d+)\.(\d+)[^\d]+(\d+):(\d+)/);
+        if (!dateTimeValues) return null;
+
+        return new Date(
+            +dateTimeValues[3],
+            +dateTimeValues[2] - 1,
+            +dateTimeValues[1],
+            +dateTimeValues[4],
+            +dateTimeValues[5],
+            0,
+            0
+        );
+    }
+
+    self.highlight = function (object) {
+        object.css("background-color", "lightgreen");
+    };
+
+    self.isCorrectSemester = function () {
+        return self.getSubHeader().contains(options.lvaSemester);
     };
 
     self.setSelectValue = function ($element, value) {
